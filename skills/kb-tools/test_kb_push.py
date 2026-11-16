@@ -20,7 +20,7 @@ class FakeService:
     def __init__(self):
         self.manifest = {k: {} for k in ("nodes", "edges", "claims", "sources", "documents", "passages")}
         self.rows = {k: {} for k in self.manifest}
-        self.state, self.batches, self.auth = {}, [], []
+        self.state, self.batches = {}, []
         svc = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -36,7 +36,6 @@ class FakeService:
                 self.wfile.write(data)
 
             def do_GET(self):
-                svc.auth.append(self.headers.get("Authorization"))
                 if self.path == "/ingest/manifest":
                     self._send({"manifest": svc.manifest, "client_state": svc.state})
                 else:
@@ -76,8 +75,6 @@ class PushTest(unittest.TestCase):
         self.svc = FakeService()
         self.addCleanup(self.svc.close)
         self.addCleanup(lambda: os.path.exists(kb.lock_file(self.root)) and os.remove(kb.lock_file(self.root)))
-        os.environ["KB_GRAPHRAG_TOKEN"] = "secret"
-        self.addCleanup(os.environ.pop, "KB_GRAPHRAG_TOKEN", None)
 
     def push(self, *extra):
         return run(self.root, "graph", "push", "--url", self.svc.url, *extra)
@@ -147,7 +144,6 @@ class PushTest(unittest.TestCase):
     def test_full_then_incremental(self):
         code, out, err = self.push("--full")
         self.assertEqual(code, 0, err)
-        self.assertEqual(self.svc.auth[0], "Bearer secret")
         self.assertTrue(self.svc.batches[0]["replace"])
         self.assertEqual(sorted(self.svc.rows["nodes"]), ["Agent Identity", "Ana Diaz", "Otter", "Pilot"])
         self.assertTrue(self.svc.state["export_ok"])

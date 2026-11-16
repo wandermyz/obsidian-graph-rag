@@ -22,20 +22,10 @@ class Settings:
     dim: int = 1024
     embed_batch: int = 8
     embed_threads: int = 8
-    auth: bool = True                   # tests may switch bearer auth off
-    rate_per_minute: int = 240
 
     @property
     def db_path(self) -> Path:
         return self.data_dir / "graph.db"
-
-    @property
-    def tokens_path(self) -> Path:
-        return self.data_dir / "tokens.json"
-
-    @property
-    def access_log(self) -> Path:
-        return self.data_dir / "access.log"
 
 
 def load() -> Settings:
@@ -49,6 +39,4 @@ def load() -> Settings:
         dim=int(env("GRAPHRAG_DIM", "64" if model == "hash" else "1024")),
         embed_batch=int(env("GRAPHRAG_EMBED_BATCH", "8")),
         embed_threads=int(env("GRAPHRAG_EMBED_THREADS", "8")),
-        auth=env("GRAPHRAG_AUTH", "1") != "0",
-        rate_per_minute=int(env("GRAPHRAG_RATE_PER_MINUTE", "240")),
     )

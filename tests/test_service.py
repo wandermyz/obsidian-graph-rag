@@ -7,7 +7,6 @@ from fastapi.testclient import TestClient
 
 from graphrag_service import config
 from graphrag_service.app import create_app
-from graphrag_service.auth import Tokens
 from graphrag_service.text import approx_tokens, fts_query, fts_text
 
 
@@ -84,26 +83,21 @@ def sample():
 
 @pytest.fixture
 def svc(tmp_path: Path):
-    settings = dataclasses.replace(config.load(), data_dir=tmp_path, model="hash", dim=64, auth=True)
-    tokens = Tokens(settings.tokens_path)
-    keys = {"read": tokens.add("reader", ["read"]), "ingest": tokens.add("pusher", ["ingest"]),
-            "public": tokens.add("outside", ["read"], domain="public")}
+    settings = dataclasses.replace(config.load(), data_dir=tmp_path, model="hash", dim=64)
     app = create_app(settings)
     with TestClient(app) as client:
-        client.keys = keys
         client.app_state = app.state
 
-        def call(method, url, scope="read", **kw):
-            return client.request(method, url, headers={"Authorization": f"Bearer {keys[scope]}"}, **kw)
+        def call(method, url, **kw):
+            return client.request(method, url, **kw)
 
         def push(**body):
-            r = call("POST", "/ingest", "ingest", json=body)
+            r = call("POST", "/ingest", json=body)
             app.state.worker.drain()
             return r
 
         def search(query, **kw):
-            scope = kw.pop("scope", "read")
-            r = call("POST", "/search", scope, json={"query": query, **kw})
+            r = call("POST", "/search", json={"query": query, **kw})
             assert r.status_code == 200, r.text
             return r.json()
 
@@ -135,7 +129,7 @@ def test_push_is_idempotent_and_reports_changes(svc):
 
 
 def test_manifest_lets_a_client_diff(svc):
-    m = svc.call("GET", "/ingest/manifest", "ingest").json()
+    m = svc.call("GET", "/ingest/manifest").json()
     assert set(m["manifest"]) == {"nodes", "edges", "claims", "sources", "documents", "passages"}
     assert len(m["manifest"]["claims"]) == 5 and m["client_state"]["revision"] == "abc123"
 
@@ -143,7 +137,7 @@ def test_manifest_lets_a_client_diff(svc):
 def test_bad_batch_changes_nothing(svc):
     r = svc.push(upsert={"claims": [{"id": "c9", "subject": "Otter", "text": "Fine."}, {"id": "c10"}]})
     assert r.status_code == 422
-    assert "c9" not in svc.call("GET", "/ingest/manifest", "ingest").json()["manifest"]["claims"]
+    assert "c9" not in svc.call("GET", "/ingest/manifest").json()["manifest"]["claims"]
     assert svc.push(upsert={"widgets": []}).status_code == 422
 
 
@@ -247,22 +241,20 @@ def test_entity_neighbors_open_documents(svc):
     assert s["counts"]["nodes"] == 6 and s["counts"]["pending_embeddings"] == 0 and s["model"]["id"] == "hash"
 
 
-# ---- auth
-def test_tokens_and_scopes(svc):
+# ---- access
+def test_no_token_is_needed(svc):
     assert svc.get("/healthz").status_code == 200
-    assert svc.post("/search", json={"query": "x"}).status_code == 401
-    assert svc.post("/search", json={"query": "x"}, headers={"Authorization": "Bearer nope"}).status_code == 401
-    assert svc.call("POST", "/ingest", "read", json={}).status_code == 403, "a read token cannot ingest"
-    assert svc.call("POST", "/search", "ingest", json={"query": "x"}).status_code == 403
+    assert svc.post("/search", json={"query": "x"}).status_code == 200
+    assert svc.get("/status").status_code == 200
+    assert svc.get("/ingest/manifest").status_code == 200
 
 
-def test_domain_restricted_token_sees_only_that_domain(svc):
-    out = svc.search("Otter flag owner backend 令牌", scope="public", filters={"domain": "enterprise"})
+def test_domain_filter_sees_only_that_domain(svc):
+    out = svc.search("Otter flag owner backend 令牌", filters={"domain": "public"})
     assert set(names(out["claims"])) <= {"Agent Identity"}
     assert not out["edges"], "an edge needs both ends in the domain"
     assert {p["path"] for p in out["passages"]} <= {"concepts/Agent Identity.md"}
     assert set(names(out["entities"], "name")) <= {"Agent Identity"}
-    assert svc.call("GET", "/entities/Otter", "public").status_code == 404
 
 
 def test_a_small_budget_still_returns_a_passage(svc):

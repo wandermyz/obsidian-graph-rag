@@ -15,8 +15,8 @@ A small GraphRAG service, and a reference client that feeds it from an LLM-maint
   notes, your entities and your conventions, so you generate your own.
 
 > **This repo holds code only.** The indexed content is private. Never commit vault notes,
-> exported graph rows, the golden set, tokens, or anything under `data/`. `.gitignore` blocks
-> `data/`, `*.db`, `*.jsonl`, `tokens.json` and `client.json`; keep it that way.
+> exported graph rows, the golden set, or anything under `data/`. `.gitignore` blocks
+> `data/`, `*.db`, `*.jsonl` and `client.json`; keep it that way.
 
 ```mermaid
 graph LR
@@ -33,8 +33,7 @@ Needs Python 3.12 and [uv](https://docs.astral.sh/uv/).
 
 ```powershell
 uv sync
-uv run graphrag token add kb --scope read --scope ingest   # prints the token once
-uv run graphrag serve                                      # 127.0.0.1:8787
+uv run graphrag serve      # 127.0.0.1:8787
 ```
 
 On Windows, `scripts/start-service.ps1` runs it with logging to `data/service.log`, and
@@ -42,11 +41,10 @@ On Windows, `scripts/start-service.ps1` runs it with logging to `data/service.lo
 
 | Setting | Default | |
 |---|---|---|
-| `GRAPHRAG_DATA_DIR` | `./data` | SQLite file, tokens, access log |
+| `GRAPHRAG_DATA_DIR` | `./data` | SQLite file |
 | `GRAPHRAG_HOST` / `GRAPHRAG_PORT` | `127.0.0.1` / `8787` | Keep it on localhost; see Security |
 | `GRAPHRAG_MODEL` | `Qwen/Qwen3-Embedding-0.6B` | `hash` selects a dependency-free test embedder |
 | `GRAPHRAG_EMBED_THREADS` / `GRAPHRAG_EMBED_BATCH` | `8` / `8` | |
-| `GRAPHRAG_RATE_PER_MINUTE` | `240` | Per read token |
 
 Changing the model drops every vector and re-embeds on the next start.
 
@@ -78,8 +76,6 @@ are keyword-searchable immediately and vector-searchable once embedded.
 
 ## Search API
 
-All endpoints except `/healthz` need `Authorization: Bearer <token>`.
-
 | Endpoint | |
 |---|---|
 | `POST /search` | Plain text in; ranked claims, edges, entities, passages and paths out |
@@ -88,7 +84,7 @@ All endpoints except `/healthz` need `Authorization: Bearer <token>`.
 | `GET /open?entity=&owner=&older_than_days=` | Current `open` claims, oldest first |
 | `GET /documents?path=` | The passages of one document |
 | `GET /status` | Counts, pending embeddings, model, the client's state |
-| `GET /healthz` | Liveness, no token |
+| `GET /healthz` | Liveness |
 
 ```json
 {"query": "who owns the trigger channel now?", "mode": "hybrid", "top_k": 8, "max_tokens": 3000,
@@ -128,10 +124,12 @@ before indexing and querying; FTS5's own tokenizers cannot match two-character w
 
 The index holds whatever was pushed into it, so treat the service as private.
 
-- It binds to `127.0.0.1`. Do not change that without an authenticating tunnel in front.
-- Tokens have scopes: `read` for search, `ingest` for writes. Only SHA-256 digests are
-  stored. `--domain public` restricts a token to rows of one domain.
-- `data/access.log` records token name, endpoint, status and result count. Never the query.
+- The service has no authentication of its own. Anything that can reach the port can search
+  and ingest.
+- It binds to `127.0.0.1`. To reach it from another machine, put an authenticating tunnel
+  in front, such as a [dev tunnel](https://learn.microsoft.com/azure/developer/dev-tunnels/)
+  (`devtunnel host -p 8787`) that is not opened with `--allow-anonymous`. Never bind it to a
+  public interface.
 
 ## Pushing from the wiki
 
@@ -141,8 +139,8 @@ python skills/kb-tools/kb.py graph push --full     # everything, and drop the re
 python skills/kb-tools/kb.py graph push --dry-run  # counts only
 ```
 
-Run from the vault root, or set `OBSIDIAN_VAULT`. URL and token come from `--url`,
-`KB_GRAPHRAG_URL` / `KB_GRAPHRAG_TOKEN`, or `~/.kb/graphrag.json` (`{"url": ..., "token": ...}`).
+Run from the vault root, or set `OBSIDIAN_VAULT`. The URL comes from `--url`,
+`KB_GRAPHRAG_URL`, or `~/.kb/graphrag.json` (`{"url": ...}`).
 
 - The push exports the wiki with the same parser `kb lint` uses. If any line does not parse,
   nothing is sent, the service keeps its last good index, and `export_ok: false` shows in
