@@ -1205,7 +1205,7 @@ def main(argv=None):
     gp.add_argument("action", choices=["export", "check", "push"])
     gp.add_argument("--out", help="directory for nodes/edges/claims/sources .jsonl")
     gp.add_argument("--strict", action="store_true", help="also fail when an edge or claim has no source page")
-    gp.add_argument("--url", help="push: service URL (default: $KB_GRAPHRAG_URL, ~/.kb/graphrag.json, localhost:8787)")
+    gp.add_argument("--url", help="push: service URL (default: $KB_GRAPHRAG_URL, ~/.kb/graphrag.json, localhost:2335)")
     gp.add_argument("--full", action="store_true", help="push: resend every row and drop anything else")
     gp.add_argument("--dry-run", action="store_true", help="push: show what would change, send nothing")
     gp.add_argument("--no-raw", action="store_true", help="push: wiki pages only, no distilled source notes")

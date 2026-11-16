@@ -33,7 +33,7 @@ Needs Python 3.12 and [uv](https://docs.astral.sh/uv/).
 
 ```powershell
 uv sync
-uv run graphrag serve      # 127.0.0.1:8787
+uv run graphrag serve      # 127.0.0.1:2335
 ```
 
 On Windows, `scripts/start-service.ps1` runs it with logging to `data/service.log`, and
@@ -42,7 +42,7 @@ On Windows, `scripts/start-service.ps1` runs it with logging to `data/service.lo
 | Setting | Default | |
 |---|---|---|
 | `GRAPHRAG_DATA_DIR` | `./data` | SQLite file |
-| `GRAPHRAG_HOST` / `GRAPHRAG_PORT` | `127.0.0.1` / `8787` | Keep it on localhost; see Security |
+| `GRAPHRAG_HOST` / `GRAPHRAG_PORT` | `127.0.0.1` / `2335` | Keep it on localhost; see Security |
 | `GRAPHRAG_MODEL` | `Qwen/Qwen3-Embedding-0.6B` | `hash` selects a dependency-free test embedder |
 | `GRAPHRAG_EMBED_THREADS` / `GRAPHRAG_EMBED_BATCH` | `8` / `8` | |
 
@@ -128,7 +128,7 @@ The index holds whatever was pushed into it, so treat the service as private.
   and ingest.
 - It binds to `127.0.0.1`. To reach it from another machine, put an authenticating tunnel
   in front, such as a [dev tunnel](https://learn.microsoft.com/azure/developer/dev-tunnels/)
-  (`devtunnel host -p 8787`) that is not opened with `--allow-anonymous`. Never bind it to a
+  (`devtunnel host -p 2335`) that is not opened with `--allow-anonymous`. Never bind it to a
   public interface.
 
 ## Pushing from the wiki

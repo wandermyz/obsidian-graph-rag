@@ -1,6 +1,6 @@
 # HTTP API
 
-The service listens on `127.0.0.1:8787` by default. Everything is JSON over HTTP.
+The service listens on `127.0.0.1:2335` by default. Everything is JSON over HTTP.
 
 - [Access](#access)
 - [Data model](#data-model)
@@ -14,7 +14,7 @@ The service listens on `127.0.0.1:8787` by default. Everything is JSON over HTTP
 
 The service has no authentication of its own: every endpoint is open to whatever can reach
 the port. It binds to `127.0.0.1`; to reach it from elsewhere, put an authenticating tunnel
-in front, such as a dev tunnel (`devtunnel host -p 8787`, without `--allow-anonymous`).
+in front, such as a dev tunnel (`devtunnel host -p 2335`, without `--allow-anonymous`).
 
 ## Data model
 
@@ -253,7 +253,7 @@ A minimal push, standard library only:
 ```python
 import hashlib, json, urllib.request
 
-URL = "http://127.0.0.1:8787"
+URL = "http://127.0.0.1:2335"
 
 def call(method, path, body=None):
     req = urllib.request.Request(URL + path, method=method,

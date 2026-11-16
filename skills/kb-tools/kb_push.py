@@ -24,7 +24,7 @@ from html.parser import HTMLParser
 
 import kb
 
-DEFAULT_URL = "http://127.0.0.1:8787"
+DEFAULT_URL = "http://127.0.0.1:2335"
 CLIENT_CONFIG = os.path.join(os.path.expanduser("~"), ".kb", "graphrag.json")
 PASSAGE_TOKENS = 450          # target size
 PASSAGE_HARD = 750            # a single block longer than this is split

@@ -17,7 +17,7 @@ def _default_data_dir() -> Path:
 class Settings:
     data_dir: Path
     host: str = "127.0.0.1"
-    port: int = 8787
+    port: int = 2335
     model: str = DEFAULT_MODEL          # "hash" selects the dependency-free test embedder
     dim: int = 1024
     embed_batch: int = 8
@@ -34,7 +34,7 @@ def load() -> Settings:
     return Settings(
         data_dir=Path(env("GRAPHRAG_DATA_DIR") or _default_data_dir()),
         host=env("GRAPHRAG_HOST", "127.0.0.1"),
-        port=int(env("GRAPHRAG_PORT", "8787")),
+        port=int(env("GRAPHRAG_PORT", "2335")),
         model=model,
         dim=int(env("GRAPHRAG_DIM", "64" if model == "hash" else "1024")),
         embed_batch=int(env("GRAPHRAG_EMBED_BATCH", "8")),

@@ -3,7 +3,7 @@
 # tunnel (e.g. a dev tunnel without --allow-anonymous); never change the host.
 param(
     [string]$DataDir = (Join-Path (Split-Path -Parent $PSScriptRoot) "data"),
-    [int]$Port = 8787
+    [int]$Port = 2335
 )
 $ErrorActionPreference = "Stop"
 $Repo = Split-Path -Parent $PSScriptRoot

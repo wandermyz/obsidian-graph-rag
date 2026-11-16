@@ -65,7 +65,7 @@ def main():
         stream.reconfigure(encoding="utf-8")
     ap = argparse.ArgumentParser()
     ap.add_argument("--golden", required=True)
-    ap.add_argument("--url", default=os.environ.get("GRAPHRAG_URL", "http://127.0.0.1:8787"))
+    ap.add_argument("--url", default=os.environ.get("GRAPHRAG_URL", "http://127.0.0.1:2335"))
     ap.add_argument("--top-k", type=int, default=8)
     ap.add_argument("--max-tokens", type=int, default=3000)
     ap.add_argument("--modes", nargs="+", default=list(MODES), choices=MODES)
