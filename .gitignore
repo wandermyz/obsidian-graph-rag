@@ -1,0 +1,21 @@
+# Never commit index data: the indexed content is private.
+/data/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite*
+*.jsonl
+/export/
+/out/
+tokens.json
+client.json
+.env
+*.log
+
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Resolved against whatever package index this machine uses; not portable, so not committed.
+uv.lock
