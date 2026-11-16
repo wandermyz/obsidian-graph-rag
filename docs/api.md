@@ -2,7 +2,7 @@
 
 The service listens on `127.0.0.1:8787` by default. Everything is JSON over HTTP.
 
-- [Authentication](#authentication)
+- [Access](#access)
 - [Data model](#data-model)
 - [Ingest](#ingest): `GET /ingest/manifest`, `POST /ingest`
 - [Search](#search): `POST /search`
@@ -10,33 +10,11 @@ The service listens on `127.0.0.1:8787` by default. Everything is JSON over HTTP
 - [Errors](#errors)
 - [Writing a client](#writing-a-client)
 
-## Authentication
+## Access
 
-Every endpoint except `GET /healthz` needs a bearer token:
-
-```
-Authorization: Bearer grag_...
-```
-
-Create tokens with the CLI on the machine that runs the service. A token is printed once and
-only its SHA-256 digest is stored, in `<data dir>/tokens.json`.
-
-```bash
-graphrag token add reader --scope read
-graphrag token add pusher --scope ingest
-graphrag token add outside --scope read --domain public --rate 60
-graphrag token list
-graphrag token revoke outside
-```
-
-| Scope | Allows |
-|---|---|
-| `read` | `/search`, `/entities`, `/open`, `/documents`, `/status` |
-| `ingest` | `/ingest/manifest`, `/ingest` |
-
-A token can hold both. `--domain <name>` pins a read token to rows of one domain: the filter
-is applied on the server and a request cannot widen it. `--rate` sets requests per minute for
-read endpoints (default 240).
+The service has no authentication of its own: every endpoint is open to whatever can reach
+the port. It binds to `127.0.0.1`; to reach it from elsewhere, put an authenticating tunnel
+in front, such as a dev tunnel (`devtunnel host -p 8787`, without `--allow-anonymous`).
 
 ## Data model
 
@@ -53,7 +31,7 @@ Only the fields marked **required** must be present. Unknown fields are ignored.
 | `id` | string | **required** |
 | `name` | string | **required**. Display name; also matched in queries |
 | `type` | string | Free vocabulary, e.g. `person`, `project`, `concept`. Used by the `types` filter |
-| `domain` | string | Free vocabulary, e.g. `public`, `enterprise`. Used by the `domain` filter and by domain-pinned tokens |
+| `domain` | string | Free vocabulary, e.g. `public`, `enterprise`. Used by the `domain` filter |
 | `aliases` | string[] | Other names. A query that contains a name or alias treats that entity as a top hit |
 | `summary` | string | One paragraph |
 | `path` | string | Where the entity's page lives in the client's world |
@@ -247,17 +225,14 @@ Response:
 | `GET /open` | `{"count": n, "open": [claim + "age_days"]}`: current claims with marker `open`, oldest first. `?entity=`, `?owner=` (matches `authors`), `?older_than_days=` |
 | `GET /documents?path=` | `{"path", "kind", "title", "note_date", "url", "passages": [{"heading", "text"}]}` in order |
 | `GET /status` | `index`, row `counts` with `pending_embeddings`, `client_state`, `last_ingest_at`, `model` (`id`, `dim`, `loaded`, `error`), `embed_error`, `schema`, `uptime_s` |
-| `GET /healthz` | `{"ok": true}`. No token |
+| `GET /healthz` | `{"ok": true}` |
 
 ## Errors
 
 | Status | Meaning |
 |---|---|
-| `401` | No bearer token, or an unknown one |
-| `403` | The token lacks the scope this endpoint needs |
-| `404` | No such entity or document (or outside the token's domain) |
+| `404` | No such entity or document |
 | `422` | Malformed request, or a bad ingest batch; the body says which row. Nothing was changed |
-| `429` | Rate limit for this token |
 | `503` | The embedding model failed to load; see `model.error` in `/status` |
 
 Error bodies are `{"detail": "..."}`.
@@ -278,13 +253,12 @@ A minimal push, standard library only:
 ```python
 import hashlib, json, urllib.request
 
-URL, TOKEN = "http://127.0.0.1:8787", "grag_..."
+URL = "http://127.0.0.1:8787"
 
 def call(method, path, body=None):
     req = urllib.request.Request(URL + path, method=method,
                                  data=json.dumps(body).encode() if body is not None else None,
-                                 headers={"Authorization": f"Bearer {TOKEN}",
-                                          "Content-Type": "application/json"})
+                                 headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=600) as resp:
         return json.load(resp)
 

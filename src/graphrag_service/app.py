@@ -1,18 +1,16 @@
-"""HTTP API. Search and read endpoints need a `read` token; ingest needs an `ingest` token."""
+"""HTTP API. No authentication of its own: it binds to localhost, and anything reaching it from
+elsewhere has to come through an authenticating tunnel (e.g. a dev tunnel)."""
 from __future__ import annotations
 
-import logging
-import logging.handlers
 import threading
 import time
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from . import config, embed
-from .auth import Tokens
 from .search import Filters, Searcher
 from .store import BadRow, Store, unj
 from .worker import EmbedWorker
@@ -45,16 +43,6 @@ class IngestBody(BaseModel):
 def create_app(settings: config.Settings | None = None, embedder=None) -> FastAPI:
     settings = settings or config.load()
     settings.data_dir.mkdir(parents=True, exist_ok=True)
-    tokens = Tokens(settings.tokens_path)
-
-    access = logging.getLogger("graphrag.access")
-    if not access.handlers and settings.auth:
-        h = logging.handlers.RotatingFileHandler(settings.access_log, maxBytes=5_000_000, backupCount=3,
-                                                 encoding="utf-8")
-        h.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
-        access.addHandler(h)
-        access.setLevel(logging.INFO)
-        access.propagate = False
 
     # The model takes a few seconds to load; do not hold up /healthz for it.
     box: dict[str, Any] = {"embedder": embedder, "error": None}
@@ -103,84 +91,49 @@ def create_app(settings: config.Settings | None = None, embedder=None) -> FastAP
     app.state.store, app.state.worker, app.state.searcher, app.state.settings = store, worker, searcher, settings
     app.state.load_model = load_model
 
-    def caller(scope: str):
-        def dep(request: Request) -> dict:
-            if not settings.auth:
-                return {"name": "anonymous", "scopes": ["read", "ingest"], "domain": None}
-            header = request.headers.get("authorization", "")
-            tok = tokens.find(header[7:].strip()) if header.lower().startswith("bearer ") else None
-            if tok is None:
-                access.info("- %s %s 401", request.method, request.url.path)
-                raise HTTPException(401, "a bearer token is required", {"WWW-Authenticate": "Bearer"})
-            if scope not in tok["scopes"]:
-                access.info("%s %s %s 403", tok["name"], request.method, request.url.path)
-                raise HTTPException(403, f"this token does not have the '{scope}' scope")
-            if scope == "read" and not tokens.allow(tok["name"], tok.get("rate") or settings.rate_per_minute):
-                access.info("%s %s %s 429", tok["name"], request.method, request.url.path)
-                raise HTTPException(429, "rate limit exceeded")
-            return tok
-        return dep
-
-    def log_ok(request: Request, tok: dict, results: int):
-        # Token name, endpoint and result count. Never the query text.
-        access.info("%s %s %s 200 results=%d", tok["name"], request.method, request.url.path, results)
-
-    def scoped(tok: dict, f: Filters) -> Filters:
-        if tok.get("domain"):
-            f.domain = tok["domain"]     # a token restricted to one domain cannot widen it
-        return f
-
     @app.get("/healthz")
     def healthz():
         return {"ok": True}
 
     @app.post("/search")
-    def search(body: SearchBody, request: Request, tok: dict = Depends(caller("read"))):
+    def search(body: SearchBody):
         fb = body.filters
-        f = scoped(tok, Filters(types=fb.types, after=fb.after, domain=fb.domain, markers=fb.markers,
-                                include_raw=fb.include_raw, include_superseded=body.include_superseded))
+        f = Filters(types=fb.types, after=fb.after, domain=fb.domain, markers=fb.markers,
+                    include_raw=fb.include_raw, include_superseded=body.include_superseded)
         try:
             out = searcher.search(body.query, body.mode, body.top_k, body.max_tokens, f)
         except RuntimeError as exc:
             raise HTTPException(503, str(exc))
-        log_ok(request, tok, len(out["claims"]) + len(out["edges"]) + len(out["passages"]))
         return out
 
     @app.get("/entities/{name}")
-    def entity(name: str, request: Request, include_superseded: bool = False, tok: dict = Depends(caller("read"))):
-        out = searcher.entity(name, scoped(tok, Filters(include_superseded=include_superseded)))
+    def entity(name: str, include_superseded: bool = False):
+        out = searcher.entity(name, Filters(include_superseded=include_superseded))
         if out is None:
             raise HTTPException(404, f"no entity named '{name}'")
-        log_ok(request, tok, len(out["claims"]) + len(out["edges"]))
         return out
 
     @app.get("/entities/{name}/neighbors")
-    def neighbors(name: str, request: Request, predicate: str | None = None, include_superseded: bool = False,
-                  tok: dict = Depends(caller("read"))):
-        out = searcher.neighbors(name, predicate, scoped(tok, Filters(include_superseded=include_superseded)))
+    def neighbors(name: str, predicate: str | None = None, include_superseded: bool = False):
+        out = searcher.neighbors(name, predicate, Filters(include_superseded=include_superseded))
         if out is None:
             raise HTTPException(404, f"no entity named '{name}'")
-        log_ok(request, tok, len(out))
         return {"entity": name, "neighbors": out}
 
     @app.get("/open")
-    def open_items(request: Request, entity: str | None = None, owner: str | None = None,
-                   older_than_days: int | None = None, tok: dict = Depends(caller("read"))):
-        out = searcher.open_items(entity, owner, older_than_days, scoped(tok, Filters()))
-        log_ok(request, tok, len(out))
+    def open_items(entity: str | None = None, owner: str | None = None, older_than_days: int | None = None):
+        out = searcher.open_items(entity, owner, older_than_days, Filters())
         return {"count": len(out), "open": out}
 
     @app.get("/documents")
-    def document(path: str, request: Request, tok: dict = Depends(caller("read"))):
-        out = searcher.document(path, scoped(tok, Filters()))
+    def document(path: str):
+        out = searcher.document(path, Filters())
         if out is None:
             raise HTTPException(404, f"no document at '{path}'")
-        log_ok(request, tok, len(out["passages"]))
         return out
 
     @app.get("/status")
-    def status(request: Request, tok: dict = Depends(caller("read"))):
-        log_ok(request, tok, 0)
+    def status():
         return {
             "index": searcher.index_info(),
             "counts": store.counts(),
@@ -194,18 +147,16 @@ def create_app(settings: config.Settings | None = None, embedder=None) -> FastAP
         }
 
     @app.get("/ingest/manifest")
-    def manifest(request: Request, tok: dict = Depends(caller("ingest"))):
-        log_ok(request, tok, 0)
+    def manifest():
         return {"manifest": store.manifest(), "client_state": unj(store.meta("client_state"), {})}
 
     @app.post("/ingest")
-    def ingest(body: IngestBody, request: Request, tok: dict = Depends(caller("ingest"))):
+    def ingest(body: IngestBody):
         try:
             stats = store.apply(body.upsert, body.delete, body.replace, body.state)
         except BadRow as exc:
             raise HTTPException(422, str(exc))
         worker.wake.set()
-        log_ok(request, tok, sum(s["inserted"] + s["updated"] + s["deleted"] for s in stats.values()))
         return {"stats": stats, "pending_embeddings": store.pending()}
 
     return app

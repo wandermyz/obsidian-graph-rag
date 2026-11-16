@@ -7,7 +7,6 @@
 *.jsonl
 /export/
 /out/
-tokens.json
 client.json
 .env
 *.log

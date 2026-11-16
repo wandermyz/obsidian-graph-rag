@@ -1,5 +1,6 @@
 # Runs the GraphRAG service in the foreground, logging to <data>\service.log.
-# Bound to 127.0.0.1. Do not change the host without putting an authenticating tunnel in front.
+# Bound to 127.0.0.1 with no auth of its own. Reach it from elsewhere only through an authenticating
+# tunnel (e.g. a dev tunnel without --allow-anonymous); never change the host.
 param(
     [string]$DataDir = (Join-Path (Split-Path -Parent $PSScriptRoot) "data"),
     [int]$Port = 8787

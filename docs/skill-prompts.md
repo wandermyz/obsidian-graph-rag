@@ -32,7 +32,7 @@ prompt needs the same ones.
 | What kinds of entity do you care about? (`<entity types>`) | People, projects and concepts suit engineering notes; a researcher may want papers, methods and datasets |
 | Which relationships matter between them? (`<predicates>`) | A small closed vocabulary keeps the graph queryable. Fifteen to twenty-five, each with an inverse name and the entity types allowed at each end, plus one catch-all |
 | How do you want confidence expressed? (`<markers>`) | For example fact / decision / inferred / claim / open. The search service passes markers through and lists `open` ones |
-| Is there a public / private split? (`<domains>`) | Lets a token be restricted to public pages |
+| Is there a public / private split? (`<domains>`) | Lets callers filter search to public pages |
 | How do notes arrive: daily journal, one-off documents, web clippings, generated reports? | Decides whether you need a per-note ingest, a batched one, or both |
 | How much may run unattended, and how do you want to hear about it? | Scheduled runs need a budget per run and a report |
 | Where does the wiki live, and what link syntax does it use? (`<wiki root>`) | Wikilinks, Markdown links, or something else |

@@ -332,20 +332,19 @@ def build_rows(vault: str, include_raw: bool = True):
 
 # --------------------------------------------------------------------------- HTTP
 
-def client_config(args) -> tuple[str, str]:
+def client_config(args) -> str:
     cfg = {}
     if os.path.isfile(CLIENT_CONFIG):
         with open(CLIENT_CONFIG, encoding="utf-8") as fh:
             cfg = json.load(fh)
     url = args.url or os.environ.get("KB_GRAPHRAG_URL") or cfg.get("url") or DEFAULT_URL
-    token = os.environ.get("KB_GRAPHRAG_TOKEN") or cfg.get("token") or ""
-    return url.rstrip("/"), token
+    return url.rstrip("/")
 
 
-def call(url: str, token: str, method: str, path: str, body=None, timeout=600):
+def call(url: str, method: str, path: str, body=None, timeout=600):
     data = json.dumps(body, ensure_ascii=False).encode("utf-8") if body is not None else None
     req = urllib.request.Request(url + path, data=data, method=method,
-                                 headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
+                                 headers={"Content-Type": "application/json"})
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))   # never through a proxy
     with opener.open(req, timeout=timeout) as resp:
         return json.load(resp)
@@ -394,14 +393,14 @@ def cmd_push(args, vault) -> int:
 
 
 def _push(args, vault) -> int:
-    url, token = client_config(args)
+    url = client_config(args)
     now = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
     rows, errors, notes = build_rows(vault, include_raw=not args.no_raw)
     try:
         if args.dry_run and errors:
             remote = {"manifest": {}, "client_state": {}}
         else:
-            remote = call(url, token, "GET", "/ingest/manifest")
+            remote = call(url, "GET", "/ingest/manifest")
     except (urllib.error.URLError, OSError, ValueError) as exc:
         if not args.dry_run:
             print(f"kb: GraphRAG service at {url} is not reachable ({exc}); nothing pushed", file=sys.stderr)
@@ -416,7 +415,7 @@ def _push(args, vault) -> int:
         if not args.dry_run:
             state = dict(remote.get("client_state") or {}, export_ok=False, export_error=errors[:5], failed_at=now)
             try:
-                call(url, token, "POST", "/ingest", {"state": state})
+                call(url, "POST", "/ingest", {"state": state})
             except (urllib.error.URLError, OSError) as exc:
                 print(f"kb: could not report the failure to the service ({exc})", file=sys.stderr)
         return 1
@@ -443,7 +442,7 @@ def _push(args, vault) -> int:
         return 0
     try:
         body = {"upsert": upsert, "delete": delete, "replace": bool(args.full), "state": state}
-        result = call(url, token, "POST", "/ingest", body)
+        result = call(url, "POST", "/ingest", body)
     except urllib.error.HTTPError as exc:
         print(f"kb: the service refused the push: {exc.code} {exc.read().decode('utf-8', 'replace')[:500]}",
               file=sys.stderr)
@@ -460,7 +459,7 @@ def _push(args, vault) -> int:
         while left and time.time() < deadline:
             time.sleep(5)
             try:
-                left = call(url, token, "GET", "/status")["counts"]["pending_embeddings"]
+                left = call(url, "GET", "/status")["counts"]["pending_embeddings"]
             except (urllib.error.URLError, OSError):
                 break
         print(f"embeddings pending after wait: {left}")

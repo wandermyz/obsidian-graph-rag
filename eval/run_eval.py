@@ -1,6 +1,6 @@
 """Golden-set evaluation of a running GraphRAG service.
 
-    uv run python eval/run_eval.py --golden <path to golden.jsonl> [--url ...] [--token ...]
+    uv run python eval/run_eval.py --golden <path to golden.jsonl> [--url ...]
 
 The golden set is private data and lives with the content it was written from, never in
 this repo. One JSON object per line:
@@ -30,9 +30,9 @@ from collections import defaultdict
 MODES = ("vector", "hybrid", "graph")
 
 
-def post(url, token, body):
+def post(url, body):
     req = urllib.request.Request(url + "/search", data=json.dumps(body).encode("utf-8"), method="POST",
-                                 headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
+                                 headers={"Content-Type": "application/json"})
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     with opener.open(req, timeout=120) as resp:
         return json.load(resp)
@@ -66,7 +66,6 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--golden", required=True)
     ap.add_argument("--url", default=os.environ.get("GRAPHRAG_URL", "http://127.0.0.1:8787"))
-    ap.add_argument("--token", default=os.environ.get("GRAPHRAG_TOKEN", ""))
     ap.add_argument("--top-k", type=int, default=8)
     ap.add_argument("--max-tokens", type=int, default=3000)
     ap.add_argument("--modes", nargs="+", default=list(MODES), choices=MODES)
@@ -82,9 +81,8 @@ def main():
     for row in rows:
         for mode in args.modes:
             t0 = time.time()
-            out = post(args.url, args.token, {"query": row["question"], "mode": mode, "top_k": args.top_k,
-                                              "max_tokens": args.max_tokens,
-                                              "filters": {"include_raw": not args.no_raw}})
+            out = post(args.url, {"query": row["question"], "mode": mode, "top_k": args.top_k,
+                                  "max_tokens": args.max_tokens, "filters": {"include_raw": not args.no_raw}})
             latency[mode].append((time.time() - t0) * 1000)
             results[mode].append(dict(score(row, out), id=row["id"], kind=row["kind"], lang=row.get("lang", "en")))
 

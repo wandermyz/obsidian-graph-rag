@@ -19,7 +19,6 @@ import uvicorn
 
 from graphrag_service import config
 from graphrag_service.app import create_app
-from graphrag_service.auth import Tokens
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "skills" / "kb-tools"))
 import kb  # noqa: E402
@@ -27,9 +26,8 @@ from test_kb import make_vault, page, read, run, write  # noqa: E402
 
 
 @pytest.fixture
-def live(tmp_path, monkeypatch):
-    settings = dataclasses.replace(config.load(), data_dir=tmp_path, model="hash", dim=64, auth=True)
-    token = Tokens(settings.tokens_path).add("kb", ["read", "ingest"])
+def live(tmp_path):
+    settings = dataclasses.replace(config.load(), data_dir=tmp_path, model="hash", dim=64)
     app = create_app(settings)
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
@@ -48,7 +46,6 @@ def live(tmp_path, monkeypatch):
 
     root = make_vault()
     run(root, "sources", "seed")
-    monkeypatch.setenv("KB_GRAPHRAG_TOKEN", token)
 
     class Live:
         vault = root
@@ -63,8 +60,7 @@ def live(tmp_path, monkeypatch):
 
         def search(self, query, **kw):
             req = urllib.request.Request(url + "/search", data=json.dumps({"query": query, **kw}).encode(),
-                                         headers={"Authorization": f"Bearer {token}",
-                                                  "Content-Type": "application/json"})
+                                         headers={"Content-Type": "application/json"})
             return json.load(opener.open(req, timeout=30))
 
         def edit(self, rel, old, new):
