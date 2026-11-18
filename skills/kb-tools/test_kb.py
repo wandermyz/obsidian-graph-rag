@@ -25,6 +25,45 @@ def read(path):
         return fh.read()
 
 
+def tiny_pdf(*pages):
+    """A valid one-font PDF with one line of text per page, built by hand (no dependencies)."""
+    n = len(pages)
+    objs = ["<< /Type /Catalog /Pages 2 0 R >>",
+            "<< /Type /Pages /Kids [%s] /Count %d >>" % (" ".join(f"{4 + 2 * i} 0 R" for i in range(n)), n),
+            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"]
+    for i, text in enumerate(pages):
+        stream = f"BT /F1 12 Tf 72 720 Td ({text}) Tj ET"
+        objs.append(f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> "
+                    f"/Contents {5 + 2 * i} 0 R >>")
+        objs.append(f"<< /Length {len(stream)} >>\nstream\n{stream}\nendstream")
+    out, offsets = b"%PDF-1.4\n", []
+    for i, body in enumerate(objs, 1):
+        offsets.append(len(out))
+        out += f"{i} 0 obj\n{body}\nendobj\n".encode("latin-1")
+    xref = len(out)
+    out += f"xref\n0 {len(objs) + 1}\n0000000000 65535 f \n".encode()
+    out += "".join(f"{o:010d} 00000 n \n" for o in offsets).encode()
+    out += f"trailer\n<< /Size {len(objs) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode()
+    return out
+
+
+def write_bytes(root, rel, data):
+    path = os.path.join(root, rel)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as fh:
+        fh.write(data)
+
+
+def pdf_backend():
+    try:
+        kb.pdf_text(os.devnull)
+    except kb.PdfTextUnavailable as exc:
+        return "no PDF text extractor" not in str(exc)
+    except Exception:  # noqa: BLE001
+        return True
+    return True
+
+
 def page(title, typ, body, **fm):
     lines = ["---", f"title: {title}", f"type: {typ}", "domain: enterprise", "date: 2026-08-25",
              "updated: 2026-08-25", "tags:", "  - aiwiki", f"  - {typ}"]
@@ -284,6 +323,41 @@ class KbTest(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("rel-format", err)
 
+
+    # ---- PDF sources
+    def test_pdfs_are_sources_even_in_attachments(self):
+        write_bytes(self.root, "Notes/attachments/Playbook.pdf", tiny_pdf("Escalate to the DRI first."))
+        write_bytes(self.root, "Imported/Primer.pdf", tiny_pdf("Prompt caching primer."))
+        write_bytes(self.root, "Imported/Primer (2).pdf", tiny_pdf("Prompt caching primer."))
+        write_bytes(self.root, "Notes/attachments/diagram.png", b"\x89PNG" + b"x" * 400)
+        items = {i["path"]: i for i in kb.sources_status(self.root)}
+        self.assertEqual(items["Notes/attachments/Playbook.pdf"]["state"], "new")
+        self.assertEqual(items["Imported/Primer.pdf"]["state"], "new")
+        self.assertNotIn("Imported/Primer (2).pdf", items, "sync copies of PDFs are ignored")
+        self.assertNotIn("Notes/attachments/diagram.png", items, "other attachments are not sources")
+
+    def test_pdf_ledger_hashes_bytes(self):
+        write_bytes(self.root, "Imported/Primer.pdf", tiny_pdf("Prompt caching primer."))
+        self.assertEqual(run(self.root, "sources", "mark", "Imported/Primer.pdf", "--distilled",
+                             "--source-page", "Design Doc")[0], 0)
+        self.assertEqual({i["path"]: i for i in kb.sources_status(self.root)}["Imported/Primer.pdf"]["state"], "current")
+        write_bytes(self.root, "Imported/Primer.pdf", tiny_pdf("Prompt caching primer, revised."))
+        self.assertEqual({i["path"]: i for i in kb.sources_status(self.root)}["Imported/Primer.pdf"]["state"], "changed")
+
+    def test_pdf_origin_resolves(self):
+        write_bytes(self.root, "Notes/attachments/Playbook.pdf", tiny_pdf("Escalate to the DRI first."))
+        kb._source_index_cache.clear()
+        self.assertEqual(kb.resolve_source_path(self.root, "Playbook.pdf"), "Notes/attachments/Playbook.pdf")
+
+    @unittest.skipUnless(pdf_backend(), "no PDF text extractor installed")
+    def test_pdf_text(self):
+        write_bytes(self.root, "Imported/Primer.pdf", tiny_pdf("Cache the system prompt.", "Hit rate was high."))
+        code, out, err = run(self.root, "sources", "text", "Imported/Primer.pdf")
+        self.assertEqual(code, 0, err)
+        self.assertIn("## Page 1", out)
+        self.assertIn("Cache the system prompt.", out)
+        self.assertIn("## Page 2", out)
+        self.assertIn("Hit rate was high.", out)
 
 if __name__ == "__main__":
     unittest.main()

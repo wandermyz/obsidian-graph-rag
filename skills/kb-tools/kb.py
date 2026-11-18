@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """kb - deterministic tooling for the AIWiki.
 
-Standard library only, so it runs anywhere Python does. `graph push` lives in kb_push.py.
+Standard library only, so it runs anywhere Python does. Reading the text of a PDF source
+needs one of PyMuPDF, pypdf or poppler's `pdftotext`; everything else, PDFs included, works
+without them. `graph push` lives in kb_push.py.
 
     kb sources status|seed|mark     which source notes are new, changed, deleted
+    kb sources text PATH...         a source note's text, PDFs included
     kb lint [--fix] [paths...]      mechanical checks; the grammar the graph relies on
     kb graph export --out DIR       nodes / edges / claims / sources as JSONL
     kb graph push                   send the graph and its passages to the GraphRAG service
@@ -31,7 +34,9 @@ from collections import Counter, defaultdict
 WIKI = "AIWiki"
 LEDGER = "_ledger.jsonl"
 SOURCE_FOLDERS = ["Clippings", "AIGen", "Daily", "Notes", "Imported"]
-SOURCE_EXTS = (".md", ".html")
+SOURCE_EXTS = (".md", ".html", ".pdf")
+BINARY_EXTS = (".pdf",)              # hashed on bytes, read through pdf_text()
+ATTACHMENT_EXTS = (".pdf",)          # source types that also count inside attachments/ folders
 MIN_SOURCE_BYTES = 200
 
 FOLDER_TYPE = {
@@ -91,7 +96,7 @@ RE_CITE_TAIL = re.compile(r"\s*\(((?:\[\[[^\]]+\]\](?:\s*,\s*|\s+and\s+)?)+)\)\s
 RE_UNSOURCED_TAIL = re.compile(r"\s*\(source unknown\)\s*\.?\s*$")
 RE_REL = re.compile(r"^\*\*([a-z_]+)\*\*\s+\[\[([^\]\|#]+)(?:\|[^\]]*)?\]\](?:\s+[—–-]\s*(.*))?$", re.S)
 RE_BACKLINK = re.compile(r"^—\s*(?:Distilled|Extracted) to \[\[.*\]\]\s*$")
-RE_SYNC_COPY = re.compile(r"\(conflict |\.md \d+\.md$|\.html \d+\.html$| \(\d+\)\.(?:md|html)$", re.I)
+RE_SYNC_COPY = re.compile(r"\(conflict |\.(md|html|pdf) \d+\.\1$| \(\d+\)\.(?:md|html|pdf)$", re.I)
 
 
 # --------------------------------------------------------------------------- small helpers
@@ -120,6 +125,76 @@ def content_hash(text: str) -> str:
     lines = [ln for ln in lines if not RE_BACKLINK.match(ln)]
     body = "\n".join(lines).strip()
     return hashlib.sha1(body.encode("utf-8")).hexdigest()
+
+
+def source_hash(path: str) -> str:
+    """Ledger hash of a source file: content_hash for text, the raw bytes for a PDF."""
+    if path.lower().endswith(BINARY_EXTS):
+        h = hashlib.sha1()
+        with open(path, "rb") as fh:
+            for block in iter(lambda: fh.read(1 << 20), b""):
+                h.update(block)
+        return h.hexdigest()
+    return content_hash(read_text(path))
+
+
+class PdfTextUnavailable(RuntimeError):
+    """No PDF text extractor is installed, or the file would not open."""
+
+
+def pdf_text(path: str) -> str:
+    """Text of a PDF as Markdown, one '## Page N' section per page.
+
+    Tries PyMuPDF, then pypdf, then poppler's pdftotext, so it works with whichever is
+    installed. Raises PdfTextUnavailable when none is, or none can read the file. A scanned
+    PDF with no text layer comes back as page headings only - check for that before
+    distilling from it.
+    """
+    pages, errors = None, []
+    try:
+        import fitz  # PyMuPDF
+        with fitz.open(path) as doc:
+            pages = [pg.get_text() for pg in doc]
+    except ImportError:
+        pass
+    except Exception as exc:  # noqa: BLE001 - any parser failure falls through to the next backend
+        errors.append(f"pymupdf: {exc}")
+    if pages is None:
+        try:
+            import pypdf
+            pages = [pg.extract_text() or "" for pg in pypdf.PdfReader(path).pages]
+        except ImportError:
+            pass
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"pypdf: {exc}")
+    if pages is None:
+        import shutil
+        import subprocess
+        exe = shutil.which("pdftotext")
+        if exe:
+            try:
+                out = subprocess.run([exe, "-layout", "-enc", "UTF-8", path, "-"], capture_output=True,
+                                     timeout=120, check=True).stdout.decode("utf-8", errors="replace")
+                pages = out.split("\f")
+                if pages and not pages[-1].strip():
+                    pages.pop()
+            except (subprocess.SubprocessError, OSError) as exc:
+                errors.append(f"pdftotext: {exc}")
+    if pages is None:
+        raise PdfTextUnavailable("; ".join(errors) or
+                                 "no PDF text extractor found - install pymupdf or pypdf, or poppler's pdftotext")
+    parts = []
+    for i, text in enumerate(pages, 1):
+        text = "\n".join(ln.rstrip() for ln in text.replace("\r\n", "\n").split("\n")).strip()
+        parts.append(f"## Page {i}\n\n{text}" if text else f"## Page {i}")
+    return "\n\n".join(parts) + "\n"
+
+
+def source_text(path: str) -> str:
+    """Readable text of a source file: the note itself, or a PDF's extracted text."""
+    if path.lower().endswith(".pdf"):
+        return pdf_text(path)
+    return read_text(path)
 
 
 def find_vault(arg: str | None) -> str:
@@ -734,9 +809,11 @@ def iter_source_files(vault):
     for folder in SOURCE_FOLDERS:
         base = os.path.join(vault, folder)
         for dirpath, dirnames, filenames in os.walk(base):
-            dirnames[:] = [d for d in dirnames if d != "attachments" and not d.startswith(".")]
+            dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+            # attachments/ holds embedded media; of that, only documents are sources
+            exts = ATTACHMENT_EXTS if "attachments" in os.path.relpath(dirpath, base).split(os.sep) else SOURCE_EXTS
             for fn in sorted(filenames):
-                if fn.lower().endswith(SOURCE_EXTS):
+                if fn.lower().endswith(exts):
                     yield os.path.relpath(os.path.join(dirpath, fn), vault).replace("\\", "/")
 
 
@@ -791,7 +868,7 @@ def sources_status(vault):
         why = ignore_reason(vault, rel)
         if why and rel not in ledger:
             continue
-        present[rel] = content_hash(read_text(os.path.join(vault, rel)))
+        present[rel] = source_hash(os.path.join(vault, rel))
     missing = {p: r for p, r in ledger.items() if p not in present}
     by_hash = defaultdict(list)
     for p, r in missing.items():
@@ -848,6 +925,25 @@ def cmd_sources(args, vault):
             print(f"... {len(pending) - args.limit} more")
         return 0
 
+    if args.action == "text":
+        if not args.paths:
+            sys.exit("kb: sources text needs a path")
+        for p in args.paths:
+            rel = p.replace("\\", "/")
+            full = os.path.join(vault, rel)
+            if not os.path.isfile(full):
+                sys.exit(f"kb: no such note: {rel}")
+            try:
+                text = source_text(full)
+            except PdfTextUnavailable as exc:
+                sys.exit(f"kb: cannot read {rel}: {exc}")
+            if len(args.paths) > 1:
+                print(f"# {rel}\n")
+            print(text[: args.max_chars] if args.max_chars else text)
+            if args.max_chars and len(text) > args.max_chars:
+                print(f"\n[... truncated at {args.max_chars} of {len(text)} characters]")
+        return 0
+
     ledger = load_ledger(vault)
     today = dt.date.today().isoformat()
 
@@ -860,7 +956,7 @@ def cmd_sources(args, vault):
             for t in link_targets(page.fm.get("origin")):
                 path = resolve_source_path(vault, t)
                 if path and path not in ledger:
-                    ledger[path] = {"path": path, "hash": content_hash(read_text(os.path.join(vault, path))),
+                    ledger[path] = {"path": path, "hash": source_hash(os.path.join(vault, path)),
                                     "status": "distilled", "source_page": name,
                                     "at": str(page.fm.get("updated") or page.fm.get("date") or today),
                                     "by": "seed"}
@@ -903,7 +999,7 @@ def cmd_sources(args, vault):
             full = os.path.join(vault, rel)
             if not os.path.isfile(full):
                 sys.exit(f"kb: no such note: {rel}")
-            row = {"path": rel, "hash": content_hash(read_text(full)), "at": today, "by": args.by or "manual"}
+            row = {"path": rel, "hash": source_hash(full), "at": today, "by": args.by or "manual"}
             if args.distilled:
                 row.update(status="distilled", source_page=args.source_page)
             else:
@@ -1178,7 +1274,7 @@ def main(argv=None):
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     sp = sub.add_parser("sources", help="source ledger")
-    sp.add_argument("action", choices=["status", "seed", "mark"])
+    sp.add_argument("action", choices=["status", "seed", "mark", "text"])
     sp.add_argument("paths", nargs="*")
     sp.add_argument("--json", action="store_true")
     sp.add_argument("--folder", action="append", choices=SOURCE_FOLDERS)
@@ -1192,6 +1288,7 @@ def main(argv=None):
     sp.add_argument("--by")
     sp.add_argument("--moved", nargs=2, metavar=("OLD", "NEW"))
     sp.add_argument("--forget", action="store_true")
+    sp.add_argument("--max-chars", type=int, default=0, help="text: stop after this many characters")
 
     lp = sub.add_parser("lint", help="mechanical checks")
     lp.add_argument("paths", nargs="*", help="limit to these pages or folders")

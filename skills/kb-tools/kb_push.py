@@ -301,7 +301,7 @@ def build_rows(vault: str, include_raw: bool = True):
         add_doc(page.rel, "wiki", name, page.fm.get("domain"), chunks)
 
     # distilled source notes: the original wording. The ledger is the scope rule.
-    notes = {"truncated": [], "raw_notes": 0}
+    notes = {"truncated": [], "unreadable": [], "raw_notes": 0}
     if include_raw:
         by_source = {s["source_page"]: s for s in sources}
         for rel, row in sorted(kb.load_ledger(vault).items()):
@@ -309,7 +309,11 @@ def build_rows(vault: str, include_raw: bool = True):
             full = os.path.join(vault, rel)
             if not sp or sp not in by_source or not os.path.isfile(full) or kb.RE_SYNC_COPY.search(rel):
                 continue
-            text = kb.read_text(full)
+            try:
+                text = kb.source_text(full)
+            except kb.PdfTextUnavailable:
+                notes["unreadable"].append(rel)   # its wiki pages still go; only the passages are missing
+                continue
             if rel.lower().endswith(".html"):
                 text = html_to_markdown(text)
             text = RE_DATA_URI.sub("", text)
@@ -421,12 +425,15 @@ def _push(args, vault) -> int:
         return 1
 
     manifest = remote["manifest"]
+    # A PDF this machine cannot read keeps whatever passages a machine that could read it sent.
+    keep = tuple(notes["unreadable"])
     upsert, delete = {}, {}
     for kind, items in rows.items():
         have = manifest.get(kind, {})
         ids = {r["id"] for r in items}
         changed = items if args.full else [r for r in items if have.get(r["id"]) != r["hash"]]
-        gone = sorted(set(have) - ids)
+        gone = sorted(i for i in set(have) - ids
+                      if not (kind in ("documents", "passages") and (i in keep or i.rsplit("#", 1)[0] in keep)))
         if changed:
             upsert[kind] = changed
         if gone:
@@ -453,6 +460,9 @@ def _push(args, vault) -> int:
     print(("full push: " if args.full else "pushed: ") + summary)
     print(f"revision {state['revision']}  pending embeddings {result['pending_embeddings']}"
           + (f"  truncated {len(notes['truncated'])}" if notes["truncated"] else ""))
+    if notes["unreadable"]:
+        print(f"kb: no text from {len(notes['unreadable'])} PDF(s), so no passages for them - install pymupdf, "
+              f"pypdf or poppler's pdftotext: " + ", ".join(notes["unreadable"]), file=sys.stderr)
     if args.wait:
         deadline = time.time() + args.wait
         left = result["pending_embeddings"]
